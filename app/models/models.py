@@ -1,4 +1,4 @@
-import time
+from datetime import datetime
 from sqlalchemy import (
     BigInteger, Column, ForeignKey, Integer,
     Numeric, String, Text, TIMESTAMP
@@ -16,7 +16,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     telegram_id = Column(BigInteger, unique=True, nullable=False)
     username = Column(String)
-    created_at = Column(TIMESTAMP, default=time.time)
+    created_at = Column(TIMESTAMP, default=datetime.now)
 
     tasks = relationship("Task", back_populates="user")
     schedules = relationship("MessageSchedule", back_populates="user")
@@ -34,7 +34,7 @@ class Task(Base):
     task_description = Column(Text)
     status = Column(String, default="pending")
     deadline = Column(TIMESTAMP)
-    created_at = Column(TIMESTAMP, default=time.time)
+    created_at = Column(TIMESTAMP, default=datetime.now)
 
     user = relationship("User", back_populates="tasks")
     schedules = relationship("MessageSchedule", back_populates="task")
@@ -61,7 +61,7 @@ class Receipt(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     raw_text = Column(Text)
-    created_at = Column(TIMESTAMP, default=time.time)
+    created_at = Column(TIMESTAMP, default=datetime.now)
 
     user = relationship("User", back_populates="receipts")
     spendings = relationship("Spending", back_populates="receipt")
@@ -76,7 +76,7 @@ class Spending(Base):
     spending_name = Column(String)
     spending_category = Column(String)
     amount = Column(Numeric)
-    created_at = Column(TIMESTAMP, default=time.time)
+    created_at = Column(TIMESTAMP, default=datetime.now)
 
     user = relationship("User", back_populates="spendings")
     receipt = relationship("Receipt", back_populates="spendings")
@@ -87,8 +87,8 @@ class ConversationHistory(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    role = Column(String) 
+    role = Column(String)
     content = Column(Text)
-    created_at = Column(TIMESTAMP, default=time.time)
+    created_at = Column(TIMESTAMP, default=datetime.now)
 
     user = relationship("User", back_populates="history")
