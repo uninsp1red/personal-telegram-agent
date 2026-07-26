@@ -1,0 +1,18 @@
+# Never copy the host virtualenv into the image — it holds macOS/arm64 native
+# wheels (asyncpg, psycopg2) that break inside the linux container.
+.venv/
+
+# Secrets / local config are provided at runtime via compose env_file, not baked in.
+.env
+
+# VCS, caches, editor cruft
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+.obsidian/

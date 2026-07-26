@@ -4,6 +4,7 @@ from sqlalchemy import (
     Numeric, String, Text, TIMESTAMP
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
+from pgvector.sqlalchemy import Vector
 
 
 class Base(DeclarativeBase):
@@ -89,6 +90,7 @@ class ConversationHistory(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     role = Column(String)
     content = Column(Text)
+    embedding = Column(Vector(1024))  # Voyage 3.5-lite
     created_at = Column(TIMESTAMP, default=datetime.now)
 
     user = relationship("User", back_populates="history")

@@ -3,11 +3,16 @@ services:
     build: .
     container_name: personal-agent-bot
     restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
   
   postgres:
-      image: postgres:15
+      image: pgvector/pgvector:pg15
       container_name: personal-agent-postgres
       restart: unless-stopped
       environment:
@@ -15,14 +20,21 @@ services:
         POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
         POSTGRES_DB: ${POSTGRES_DB}
       ports:
-        - "5432:5432"
+        - "5433:5432"
       volumes:
         - postgres_data:/var/lib/postgresql/data
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+        interval: 5s
+        timeout: 5s
+        retries: 5
   
   redis:
     image: redis:latest
     container_name: personal-agent-redis
     restart: unless-stopped
+    # Not started by a plain `docker-compose up` — only with `--profile worker`.
+    profiles: ["worker"]
     ports:
       - "6379:6379"
     
@@ -30,9 +42,19 @@ services:
     build: .
     container_name: personal-agent-worker
     restart: unless-stopped
+    # Aspirational: requires celery/redis deps and an app/worker module that do
+    # not exist yet. Kept out of the default `up` via a profile so it can't
+    # crash-loop the stack. Enable with `docker-compose --profile worker up`.
+    profiles: ["worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     command: celery -A app.worker.celery worker --loglevel=info
 
 volumes:
