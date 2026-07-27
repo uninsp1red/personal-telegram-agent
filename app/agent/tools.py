@@ -2,6 +2,8 @@ from langchain_core.tools import tool
 from app.models import crud
 from app.models.session import get_db
 from app.services.embeddings import embed_with_retry
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 
 def make_agent_tools(user_id: int, receipt_id: int | None = None):
@@ -66,7 +68,7 @@ def make_agent_tools(user_id: int, receipt_id: int | None = None):
         Используй, когда пользователь ссылается на давний разговор, который не
         поместился в последние сообщения текущего диалога — например
         "а что я говорил про отпуск" или "напомни что мы решили насчёт машины"."""
-        vectors = await embed_with_retry([query], input_type="query")  # query, не document!
+        vectors = await embed_with_retry([query], input_type="query")
 
         async with get_db() as session:
             messages = await crud.search_history(
@@ -80,4 +82,62 @@ def make_agent_tools(user_id: int, receipt_id: int | None = None):
             f"[{m.created_at:%d.%m %H:%M}] {m.role}: {m.content}" for m in messages
         )
 
-    return [add_task, get_tasks, complete_task, delete_task, save_spending, recall_history]
+    @tool
+    async def schedule_reminder(title: str, time_to_send: str) -> str:
+        """Создаёт напоминание. time_to_send — ЛОКАЛЬНОЕ время пользователя в ISO
+        'YYYY-MM-DD HH:MM'. Текущее локальное время и часовой пояс есть в системном
+        промпте — посчитай абсолютное локальное время сам."""
+        async with get_db() as session:
+            tz = await crud.get_user_timezone(session, user_id)
+        local = datetime.fromisoformat(time_to_send).replace(tzinfo=ZoneInfo(tz))
+        utc = local.astimezone(timezone.utc)
+        async with get_db() as session:
+            schedule = await crud.create_schedule(
+                session, user_id=user_id, title=title, time_to_send=utc,
+            )
+        return f"Напомню «{schedule.title}» {local:%d.%m в %H:%M} ({tz})"
+
+    @tool
+    async def set_timezone(timezone_name: str) -> str:
+        """Сохраняет часовой пояс пользователя в формате IANA (например
+        'Europe/Moscow', 'Asia/Almaty', 'Europe/Kyiv'). Вызови, когда пользователь
+        называет свой город или часовой пояс, чтобы напоминания приходили по его
+        локальному времени."""
+        try:
+            ZoneInfo(timezone_name)
+        except Exception:
+            return f"Не знаю такой часовой пояс: {timezone_name}. Нужен IANA-формат, например Europe/Moscow."
+        async with get_db() as session:
+            await crud.set_user_timezone(session, user_id, timezone_name)
+        return f"Часовой пояс сохранён: {timezone_name}"
+
+    @tool
+    async def list_reminders() -> str:
+        """Показывает активные (ещё не отправленные) напоминания пользователя — их id
+        и время в его часовом поясе. Используй, когда пользователь просит показать
+        напоминания или спрашивает, что запланировано."""
+        async with get_db() as session:
+            tz = await crud.get_user_timezone(session, user_id)
+            schedules = await crud.get_user_schedules(session, user_id, status="pending")
+        if not schedules:
+            return "Активных напоминаний нет."
+        zone = ZoneInfo(tz)
+        return "\n".join(
+            f"[{s.id}] {s.time_to_send.astimezone(zone):%d.%m %H:%M} — {s.title}"
+            for s in schedules
+        )
+
+    @tool
+    async def cancel_reminder(reminder_id: int) -> str:
+        """Отменяет напоминание по его id (id бери из list_reminders — не выдумывай).
+        Используй, когда пользователь просит отменить или убрать напоминание."""
+        async with get_db() as session:
+            ok = await crud.cancel_schedule(session, schedule_id=reminder_id, user_id=user_id)
+        if not ok:
+            return f"Напоминание с id={reminder_id} не найдено."
+        return f"Напоминание {reminder_id} отменено."
+
+    return [
+        add_task, get_tasks, complete_task, delete_task, save_spending,
+        recall_history, schedule_reminder, set_timezone, list_reminders, cancel_reminder,
+    ]

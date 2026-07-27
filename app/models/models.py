@@ -10,13 +10,13 @@ from pgvector.sqlalchemy import Vector
 class Base(DeclarativeBase):
     pass
 
-
 class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
     telegram_id = Column(BigInteger, unique=True, nullable=False)
     username = Column(String)
+    timezone = Column(String, nullable=False, server_default="UTC")
     created_at = Column(TIMESTAMP, default=datetime.now)
 
     tasks = relationship("Task", back_populates="user")
@@ -24,7 +24,6 @@ class User(Base):
     receipts = relationship("Receipt", back_populates="user")
     spendings = relationship("Spending", back_populates="user")
     history = relationship("ConversationHistory", back_populates="user")
-
 
 class Task(Base):
     __tablename__ = "tasks"
@@ -40,7 +39,6 @@ class Task(Base):
     user = relationship("User", back_populates="tasks")
     schedules = relationship("MessageSchedule", back_populates="task")
 
-
 class MessageSchedule(Base):
     __tablename__ = "message_schedule"
 
@@ -50,11 +48,10 @@ class MessageSchedule(Base):
     title = Column(String)
     description = Column(Text)
     status = Column(String, default="pending")
-    time_to_send = Column(TIMESTAMP)
+    time_to_send = Column(TIMESTAMP(timezone=True))
 
     user = relationship("User", back_populates="schedules")
     task = relationship("Task", back_populates="schedules")
-
 
 class Receipt(Base):
     __tablename__ = "receipts"
@@ -66,7 +63,6 @@ class Receipt(Base):
 
     user = relationship("User", back_populates="receipts")
     spendings = relationship("Spending", back_populates="receipt")
-
 
 class Spending(Base):
     __tablename__ = "spendings"
@@ -81,7 +77,6 @@ class Spending(Base):
 
     user = relationship("User", back_populates="spendings")
     receipt = relationship("Receipt", back_populates="spendings")
-
 
 class ConversationHistory(Base):
     __tablename__ = "conversation_history"

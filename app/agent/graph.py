@@ -6,27 +6,34 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_cerebras import ChatCerebras
+import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 SYSTEM_PROMPT = (
     "Ты — личный ассистент в Telegram. Помогаешь вести задачи и учитывать траты. Отвечай кратко, по-русски."
 )
 
-# Краткосрочная память диалога живёт здесь (в процессе), отдельная на каждого
-# пользователя по thread_id. Долгосрочная память — это эмбеддинги в БД.
 checkpointer = InMemorySaver()
 
 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
-
-def build_graph(tools: list):
-    llm = ChatCerebras(model="gemma-4-31b")  # Cerebras-hosted Gemma 4 31B
+def build_graph(tools: list, tz: str = "UTC"):
+    llm = ChatCerebras(model="gemma-4-31b", api_key=os.getenv("CEREBRAS_API_KEY"))  
     llm_with_tools = llm.bind_tools(tools)
 
     async def agent_node(state: AgentState) -> AgentState:
-        # Системный промпт не храним в состоянии — подставляем на каждый вызов LLM.
-        messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
+        now_local = datetime.now(ZoneInfo(tz))
+        prompt = (
+            f"{SYSTEM_PROMPT}\n"
+            f"Часовой пояс пользователя: {tz}. Текущее локальное время: {now_local:%Y-%m-%d %H:%M}. "
+            f"Время в напоминаниях указывай в этом локальном времени. Если пояс UTC "
+            f"(не задан) и пользователь просит напоминание — сначала уточни город/часовой "
+            f"пояс и сохрани через set_timezone."
+        )
+        messages = [SystemMessage(content=prompt)] + state["messages"]
         response = await llm_with_tools.ainvoke(messages)
         return {"messages": [response]}
 
@@ -35,7 +42,7 @@ def build_graph(tools: list):
     graph.add_node("tools", ToolNode(tools))
 
     graph.set_entry_point("agent")
-    graph.add_conditional_edges("agent", tools_condition)  # tool_calls? -> tools, иначе -> END
+    graph.add_conditional_edges("agent", tools_condition) 
     graph.add_edge("tools", "agent")
 
     return graph.compile(checkpointer=checkpointer)

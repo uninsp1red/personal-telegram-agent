@@ -1,6 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from app.models.models import User, Task, Receipt, Spending, ConversationHistory
+from sqlalchemy import select, update
+from sqlalchemy.orm import selectinload
+from app.models.models import User, Task, Receipt, Spending, ConversationHistory, MessageSchedule
+from datetime import datetime
 
 
 async def get_or_create_user(session: AsyncSession, telegram_id: int, username: str) -> User:
@@ -16,6 +18,18 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
     await session.commit()
     await session.refresh(new_user)
     return new_user
+
+
+async def get_user_timezone(session: AsyncSession, user_id: int) -> str:
+    result = await session.execute(select(User.timezone).where(User.id == user_id))
+    return result.scalar_one_or_none() or "UTC"
+
+
+async def set_user_timezone(session: AsyncSession, user_id: int, timezone: str) -> None:
+    await session.execute(
+        update(User).where(User.id == user_id).values(timezone=timezone)
+    )
+    await session.commit()
 
 async def add_task(session: AsyncSession, user_id: int, title: str) -> Task:
     task = Task(user_id=user_id, task_name=title)
@@ -105,3 +119,55 @@ async def search_history(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+async def create_schedule(
+    session: AsyncSession, user_id: int, title: str, time_to_send: datetime, task_id: int | None = None,
+) -> MessageSchedule:
+    schedule = MessageSchedule(
+        user_id=user_id, task_id=task_id, title=title, time_to_send=time_to_send, status="pending",
+    )
+    session.add(schedule)
+    await session.commit()
+    await session.refresh(schedule)
+    return schedule
+
+async def get_due_schedules(session: AsyncSession, before: datetime) -> list[MessageSchedule]:
+    result = await session.execute(
+        select(MessageSchedule)
+        .options(selectinload(MessageSchedule.user))
+        .where(
+            MessageSchedule.status == "pending", MessageSchedule.time_to_send <= before,
+        )
+    )
+    return list(result.scalars().all())
+
+async def mark_sent(session: AsyncSession, schedule_id: int) -> None:
+    await session.execute(
+        update(MessageSchedule).where(MessageSchedule.id == schedule_id).values(status="sent")
+    )
+    await session.commit()
+
+
+async def get_user_schedules(
+    session: AsyncSession, user_id: int, status: str = "pending",
+) -> list[MessageSchedule]:
+    result = await session.execute(
+        select(MessageSchedule)
+        .where(MessageSchedule.user_id == user_id, MessageSchedule.status == status)
+        .order_by(MessageSchedule.time_to_send)
+    )
+    return list(result.scalars().all())
+
+
+async def cancel_schedule(session: AsyncSession, schedule_id: int, user_id: int) -> bool:
+    result = await session.execute(
+        update(MessageSchedule)
+        .where(
+            MessageSchedule.id == schedule_id,
+            MessageSchedule.user_id == user_id,
+            MessageSchedule.status == "pending",
+        )
+        .values(status="cancelled")
+    )
+    await session.commit()
+    return result.rowcount > 0
