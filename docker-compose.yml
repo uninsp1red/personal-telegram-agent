@@ -11,6 +11,23 @@ services:
       postgres:
         condition: service_healthy
 
+  ws-api:
+    build: .
+    container_name: personal-agent-ws-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      WS_API_TOKEN: ${WS_API_TOKEN}
+      WS_USER_ID: ${WS_USER_ID}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["uv", "run", "--no-sync", "uvicorn", "app.api.websocket:app", "--host", "0.0.0.0", "--port", "8000"]
+
   postgres:
     image: pgvector/pgvector:pg15
     container_name: personal-agent-postgres
@@ -33,7 +50,7 @@ services:
     image: redis:latest
     container_name: personal-agent-redis
     restart: unless-stopped
-    # Not started by a plain `docker-compose up` — only with `--profile worker`.
+    # Not started by a plain docker-compose up — only with --profile worker.
     profiles: ["worker"]
     ports:
       - "6379:6379"
@@ -42,9 +59,6 @@ services:
     build: .
     container_name: personal-agent-worker
     restart: unless-stopped
-    # Aspirational: requires celery/redis deps and an app/worker module that do
-    # not exist yet. Kept out of the default `up` via a profile so it can't
-    # crash-loop the stack. Enable with `docker-compose --profile worker up`.
     profiles: ["worker"]
     env_file: .env
     environment:
