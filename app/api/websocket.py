@@ -5,7 +5,7 @@ import os
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from app.agent.core import invoke as invoke_agent
+from app.agent.core import stream as stream_agent
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Personal Telegram Agent WebSocket API")
@@ -18,11 +18,12 @@ async def health() -> dict[str, str]:
 
 @app.websocket("/ws/chat")
 async def chat(websocket: WebSocket) -> None:
-    """Authenticated, single-user WebSocket bridge to the existing LangGraph agent.
+    """Authenticated WebSocket bridge to the existing LangGraph agent.
 
     First client frame: {"token": "..."}
     Later client frames: {"message": "..."}
-    Server frames: {"type": "ready"} / {"type": "response", "message": "..."}.
+    Server frames: {"type": "ready"}, {"type": "token", "text": "..."},
+    {"type": "done"}, or {"type": "error", "message": "..."}.
     """
     await websocket.accept()
 
@@ -57,9 +58,16 @@ async def chat(websocket: WebSocket) -> None:
 
     try:
         while True:
-            payload = await websocket.receive_json()
-            message = payload.get("message") if isinstance(payload, dict) else None
+            try:
+                payload = await websocket.receive_json()
+            except json.JSONDecodeError:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Frame must contain valid JSON.",
+                })
+                continue
 
+            message = payload.get("message") if isinstance(payload, dict) else None
             if not isinstance(message, str) or not message.strip():
                 await websocket.send_json({
                     "type": "error",
@@ -68,10 +76,16 @@ async def chat(websocket: WebSocket) -> None:
                 continue
 
             try:
-                reply = await invoke_agent(user_id=user_id, message=message.strip())
-                await websocket.send_json({"type": "response", "message": reply})
+                async for text_chunk in stream_agent(
+                    user_id=user_id,
+                    message=message.strip(),
+                ):
+                    await websocket.send_json({"type": "token", "text": text_chunk})
+                await websocket.send_json({"type": "done"})
+            except WebSocketDisconnect:
+                raise
             except Exception:
-                logger.exception("Agent invocation failed over WebSocket")
+                logger.exception("Agent streaming failed over WebSocket")
                 await websocket.send_json({
                     "type": "error",
                     "message": "Agent processing failed. Check server logs.",
