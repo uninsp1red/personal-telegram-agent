@@ -21,7 +21,12 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
 def build_graph(tools: list, tz: str = "UTC"):
-    llm = ChatCerebras(model="gemma-4-31b", api_key=os.getenv("CEREBRAS_API_KEY"))  
+    # Enable provider-side token streaming so LangGraph can emit message chunks.
+    llm = ChatCerebras(
+        model="gemma-4-31b",
+        api_key=os.getenv("CEREBRAS_API_KEY"),
+        streaming=True,
+    )
     llm_with_tools = llm.bind_tools(tools)
 
     async def agent_node(state: AgentState) -> AgentState:
@@ -42,7 +47,7 @@ def build_graph(tools: list, tz: str = "UTC"):
     graph.add_node("tools", ToolNode(tools))
 
     graph.set_entry_point("agent")
-    graph.add_conditional_edges("agent", tools_condition) 
+    graph.add_conditional_edges("agent", tools_condition)
     graph.add_edge("tools", "agent")
 
     return graph.compile(checkpointer=checkpointer)

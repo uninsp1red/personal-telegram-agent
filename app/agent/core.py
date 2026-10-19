@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+
 from langchain_core.messages import HumanMessage, AIMessage, RemoveMessage
 from app.agent.tools import make_agent_tools
 from app.agent.graph import build_graph
@@ -26,6 +28,43 @@ async def invoke(user_id: int, message: str, receipt_id: int | None = None) -> s
     except Exception:
         logger.exception("memory flush failed for user %s", user_id)
     return reply
+
+
+async def stream(user_id: int, message: str, receipt_id: int | None = None) -> AsyncIterator[str]:
+    """Yield user-visible text chunks while the LangGraph agent is running."""
+    tools = make_agent_tools(user_id=user_id, receipt_id=receipt_id)
+    async with get_db() as session:
+        tz = await crud.get_user_timezone(session, user_id)
+    graph = build_graph(tools, tz)
+    config = {"configurable": {"thread_id": str(user_id)}}
+
+    async for chunk, metadata in graph.astream(
+        {"messages": [HumanMessage(content=message)]},
+        config=config,
+        stream_mode="messages",
+    ):
+        # Stream only text emitted by the agent node, not tool-node output.
+        if metadata.get("langgraph_node") != "agent":
+            continue
+
+        content = chunk.content
+        if isinstance(content, str):
+            if content:
+                yield content
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text")
+                    if isinstance(text, str) and text:
+                        yield text
+
+    # Preserve the existing short-term/long-term memory maintenance after the run.
+    try:
+        state = await graph.aget_state(config)
+        await _flush_if_full(user_id, graph, config, state.values.get("messages", []))
+    except Exception:
+        logger.exception("memory flush failed after streaming for user %s", user_id)
+
 
 async def _flush_if_full(user_id: int, graph, config: dict, messages: list) -> None:
     """Когда диалог дорос до SHORT_TERM_LIMIT сообщений — эмбеддим его ОДНИМ
