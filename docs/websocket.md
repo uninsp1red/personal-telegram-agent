@@ -1,6 +1,6 @@
 # WebSocket chat endpoint
 
-This adds a small WebSocket transport for the existing LangGraph agent. It is a separate API process; the Telegram bot continues to work as before.
+This adds a WebSocket transport for the existing LangGraph agent. The endpoint streams text chunks as the agent generates its answer; the Telegram bot continues to work as before.
 
 ## Configuration
 
@@ -35,19 +35,23 @@ WebSocket URL: `ws://localhost:8000/ws/chat`
    ```
 
 3. Wait for `{"type":"ready"}`.
-4. Send messages as JSON frames:
+4. Send a message as a JSON frame:
 
    ```json
    {"message":"Добавь задачу купить молоко"}
    ```
 
-5. The server invokes the same `app.agent.core.invoke` function used by the Telegram bot and returns:
+5. The server sends text chunks as they arrive:
 
    ```json
-   {"type":"response","message":"..."}
+   {"type":"token","text":"Задача "}
+   {"type":"token","text":"добавлена"}
+   {"type":"done"}
    ```
 
-Invalid frames return a JSON error. Invalid authentication closes the connection with code 1008. Server-side processing errors are logged and return a generic error to the client.
+   Chunk boundaries are not guaranteed to match words. The client should append each `token.text` to the current answer and treat `done` as the end of that answer. An error is represented as `{"type":"error","message":"..."}`.
+
+The server calls `app.agent.core.stream`, which uses LangGraph's `astream(..., stream_mode="messages")` to receive model message chunks. It streams only text chunks from the agent node, not tool-node output, and runs the existing conversation-memory maintenance after generation.
 
 ## Try it with a WebSocket client
 
@@ -57,6 +61,6 @@ Install `websocat`, then run:
 websocat ws://localhost:8000/ws/chat
 ```
 
-Paste the token JSON as the first line, then send message JSON lines.
+Paste the token JSON as the first line, then send message JSON lines. You should see several `token` frames followed by `done` (although a short answer may arrive in only one text chunk).
 
 For local-only interview practice this is enough. Before exposing it publicly, add TLS (WSS), rate limiting, and a stronger identity/session model. The configured token is sent inside the WebSocket message, so do not use plain `ws://` over an untrusted network.
